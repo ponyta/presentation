@@ -1,0 +1,280 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Untitled Document.md</title><script type="text/javascript">
+//<![CDATA[
+window.__cfRocketOptions = {byc:0,p:0,petok:"fdf4581bf2b5d9f4f5e16c47401e8c253adb60e6-1523998071-1800"};
+//]]>
+</script>
+<script type="text/javascript" src="https://ajax.cloudflare.com/cdn-cgi/scripts/935cb224/cloudflare-static/rocket.min.js"></script>
+<style></style></head><body id="preview">
+<h1><a id="Postgres_Locking_0"></a>Postgres Locking</h1>
+<p>By: Chun Li</p>
+<p>Postgres is pretty good at supporting concurrent transactions, and being ACID compliant. However, it still needs to use locks to properly function sometimes.</p>
+<p>In general, transactions will run concurrently until encountering a lock, at which point it will either acquire it, or queue in line for the lock.</p>
+<h1><a id="Table_Locks_7"></a>Table Locks</h1>
+<p>There is a table wide lock, mostly important for DDL changes.</p>
+<table class="table table-striped table-bordered">
+<thead>
+<tr>
+<th style="text-align:right">Runs concurrently with</th>
+<th style="text-align:center">SELECT</th>
+<th style="text-align:center">INSERT UPDATE DELETE</th>
+<th style="text-align:center">CREATE INDEX CONC VACUUM ANALYZE</th>
+<th style="text-align:center">CREATE INDEX</th>
+<th style="text-align:center">CREATE TRIGGER</th>
+<th style="text-align:center">ALTER TABLE DROP TABLE TRUNCATE VACUUM FULL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">SELECT</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:right">INSERT UPDATE DELETE</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:right">CREATE INDEX CONC VACUUM ANALYZE</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:right">CREATE INDEX</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:right">CREATE TRIGGER</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:right">ALTER TABLE DROP TABLE TRUNCATE VACUUM FULL</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+</tbody>
+</table>
+<h1><a id="Row_Locks_19"></a>Row Locks</h1>
+<p>There is also a lock for each row, which maintains Postgres’ consistency. There are two types for each row, <code>share</code> and <code>exclusive</code>. Multiple transactions can hold onto a <code>share</code> lock at a time, but only one can hold onto an <code>exclusive</code> lock at a time.</p>
+<table class="table table-striped table-bordered">
+<thead>
+<tr>
+<th style="text-align:center">Can access row concurrently with:</th>
+<th style="text-align:center">SELECT</th>
+<th style="text-align:center">SELECT FOR SHARE</th>
+<th style="text-align:center">SELECT FOR UPDATE</th>
+<th style="text-align:center">UPDATE DELETE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center">SELECT</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+</tr>
+<tr>
+<td style="text-align:center">SELECT FOR SHARE</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:center">SELECT FOR UPDATE</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+<tr>
+<td style="text-align:center">UPDATE</td>
+<td style="text-align:center">✅</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+<td style="text-align:center">❌</td>
+</tr>
+</tbody>
+</table>
+<p>For completeness, there are also Page-level locks and Advisory-level (application) locks, but they are usually not important.</p>
+<h1><a id="Diagnostics_29"></a>Diagnostics</h1>
+<p><code>pg_locks</code> shows what locks are granted and what processes are waiting for locks to be acquired.</p>
+<p>Who is waiting on a lock?</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">SELECT</span> relation::regclass, * <span class="hljs-keyword">FROM</span> pg_locks <span class="hljs-keyword">WHERE</span> <span class="hljs-keyword">NOT</span> GRANTED;</span>
+</code></pre>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">SELECT</span> a.datname,
+         <span class="hljs-keyword">c</span>.relname,
+         <span class="hljs-keyword">l</span>.transactionid,
+         <span class="hljs-keyword">l</span>.<span class="hljs-keyword">mode</span>,
+         <span class="hljs-keyword">l</span>.GRANTED,
+         a.usename,
+         a.<span class="hljs-keyword">query</span>, 
+         a.query_start,
+         age(<span class="hljs-keyword">now</span>(), a.query_start) <span class="hljs-keyword">AS</span> <span class="hljs-string">"age"</span>, 
+         a.pid 
+    <span class="hljs-keyword">FROM</span>  pg_stat_activity a
+     <span class="hljs-keyword">JOIN</span> pg_locks         <span class="hljs-keyword">l</span> <span class="hljs-keyword">ON</span> <span class="hljs-keyword">l</span>.pid = a.pid
+     <span class="hljs-keyword">JOIN</span> pg_class         <span class="hljs-keyword">c</span> <span class="hljs-keyword">ON</span> <span class="hljs-keyword">c</span>.<span class="hljs-keyword">oid</span> = <span class="hljs-keyword">l</span>.relation
+    <span class="hljs-keyword">ORDER</span> <span class="hljs-keyword">BY</span> a.query_start;</span>
+</code></pre>
+<p>You can <code>SET application_name='%your_logical_name%'</code> at the beginning of transactions to make tracking the transactions easier. This can then show what is blocking row-level locks:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">SELECT</span> blocked_locks.pid     <span class="hljs-keyword">AS</span> blocked_pid,
+         blocked_activity.usename  <span class="hljs-keyword">AS</span> blocked_user,
+         blocking_locks.pid     <span class="hljs-keyword">AS</span> blocking_pid,
+         blocking_activity.usename <span class="hljs-keyword">AS</span> blocking_user,
+         blocked_activity.<span class="hljs-keyword">query</span>    <span class="hljs-keyword">AS</span> blocked_statement,
+         blocking_activity.<span class="hljs-keyword">query</span>   <span class="hljs-keyword">AS</span> current_statement_in_blocking_process,
+         blocked_activity.application_name <span class="hljs-keyword">AS</span> blocked_application,
+         blocking_activity.application_name <span class="hljs-keyword">AS</span> blocking_application
+   <span class="hljs-keyword">FROM</span>  pg_catalog.pg_locks         blocked_locks
+    <span class="hljs-keyword">JOIN</span> pg_catalog.pg_stat_activity blocked_activity  <span class="hljs-keyword">ON</span> blocked_activity.pid = blocked_locks.pid
+    <span class="hljs-keyword">JOIN</span> pg_catalog.pg_locks         blocking_locks 
+        <span class="hljs-keyword">ON</span> blocking_locks.locktype = blocked_locks.locktype
+        <span class="hljs-keyword">AND</span> blocking_locks.<span class="hljs-keyword">DATABASE</span> <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.<span class="hljs-keyword">DATABASE</span>
+        <span class="hljs-keyword">AND</span> blocking_locks.relation <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.relation
+        <span class="hljs-keyword">AND</span> blocking_locks.page <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.page
+        <span class="hljs-keyword">AND</span> blocking_locks.tuple <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.tuple
+        <span class="hljs-keyword">AND</span> blocking_locks.virtualxid <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.virtualxid
+        <span class="hljs-keyword">AND</span> blocking_locks.transactionid <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.transactionid
+        <span class="hljs-keyword">AND</span> blocking_locks.classid <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.classid
+        <span class="hljs-keyword">AND</span> blocking_locks.objid <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.objid
+        <span class="hljs-keyword">AND</span> blocking_locks.objsubid <span class="hljs-keyword">IS</span> <span class="hljs-keyword">NOT</span> <span class="hljs-keyword">DISTINCT</span> <span class="hljs-keyword">FROM</span> blocked_locks.objsubid
+        <span class="hljs-keyword">AND</span> blocking_locks.pid != blocked_locks.pid 
+    <span class="hljs-keyword">JOIN</span> pg_catalog.pg_stat_activity blocking_activity <span class="hljs-keyword">ON</span> blocking_activity.pid = blocking_locks.pid
+   <span class="hljs-keyword">WHERE</span> <span class="hljs-keyword">NOT</span> blocked_locks.GRANTED;</span>
+</code></pre>
+<h3><a id="Logging_81"></a>Logging</h3>
+<p>Also, you may set <code>log_lock_waits (boolean)</code> to log a message whenever a session takes longer than <code>deadlock_timeout</code> to acquire a lock.</p>
+<p>The setting <code>deadlock_timeout</code> determines how long to wait before checking for a potential deadlock (which is expensive).</p>
+<h1><a id="Some_examples_86"></a>Some examples</h1>
+<p>Or, <em>How one guy found 7 easy ways to make your Postgres faster!!! (Engineers hate him!!)</em></p>
+<h3><a id="1_Dont_specify_default_values_when_adding_columns_89"></a>1. Don’t specify default values when adding columns</h3>
+<p>When specifying a default value for a large table, Postgres needs to write it in for every row, locking the whole table. Instead, you should create the column and add in the default value afterwards.</p>
+<p>BAD:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">ALTER</span> <span class="hljs-keyword">TABLE</span> friends <span class="hljs-keyword">ADD</span> <span class="hljs-keyword">COLUMN</span> salary <span class="hljs-built_in">int</span> <span class="hljs-keyword">DEFAULT</span> <span class="hljs-number">100000</span>;</span>
+</code></pre>
+<p>BETTER:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">ALTER</span> <span class="hljs-keyword">TABLE</span> friends <span class="hljs-keyword">ADD</span> <span class="hljs-keyword">COLUMN</span> salary;</span> <span class="hljs-comment">-- pretty fast</span>
+<span class="hljs-comment">-- now update</span>
+<span class="hljs-operator"><span class="hljs-keyword">UPDATE</span> friends <span class="hljs-keyword">SET</span> salary = <span class="hljs-number">100000</span>;</span>
+</code></pre>
+<p>EVEN BETTER:<br>
+Batch it, for example:</p>
+<pre><code class="language-java">do {
+   rowsUpdated = sql.execute(<span class="hljs-string">"UPDATE friends SET salary=100000"</span> +
+   <span class="hljs-string">" WHERE id IN "</span> + 
+   <span class="hljs-string">"(SELECT id FROM friends WHERE salary IS NULL LIMIT ?)"</span>, batchSize)
+} <span class="hljs-keyword">while</span>(rowsUpdated &gt; <span class="hljs-number">0</span>);
+</code></pre>
+<p>&lt;!-- this is also why we batch big table updates like Karen’s from last night --&gt;</p>
+<h3><a id="2_Beware_of_lock_queues_use_lock_timeouts_112"></a>2. Beware of lock queues, use lock timeouts</h3>
+<p>When a transaction attempts to acquire a lock, it must check for conflicting locks for <em>every transaction in the lock queue</em>. This means that if you must hold an exclusive lock, like with <code>ALTER TABLE</code>, any transactions that come after will also block on it, <strong>and</strong> <code>ALTER TABLE</code> will block until the table is free.</p>
+<p>For example, let’s say there is a long running <code>SELECT</code> statement called transaction <code>A</code>. If you run an <code>ALTER TABLE</code> in transaction <code>B</code> at this point, it will block on <code>A</code>, but also any other transaction <code>C</code> that comes after will block, even if it wouldn’t block on the currently running transaction <code>A</code>.</p>
+<p>One solution is to set <code>lock_timeout</code> as a safeguard like so:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">SET</span> lock_timeout <span class="hljs-keyword">TO</span> <span class="hljs-string">'2s'</span>
+<span class="hljs-keyword">ALTER</span> <span class="hljs-keyword">TABLE</span> friends <span class="hljs-keyword">ADD</span> <span class="hljs-keyword">COLUMN</span> salary <span class="hljs-built_in">int</span>;</span>
+</code></pre>
+<p>This way, any DDL command you run can only block queries for up to 2s, and you can try again later if it fails. You can always query <code>pg_stat_activity</code> to see if there are any current long running transactions.</p>
+<h3><a id="3_Create_indexes_CONCURRENTLY_126"></a>3. Create indexes <code>CONCURRENTLY</code></h3>
+<p>For more information, see <a href="https://www.postgresql.org/docs/9.5/static/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY">https://www.postgresql.org/docs/9.5/static/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY</a></p>
+<p><code>CONCURRENTLY</code> allows you to create indexes without blocking writes on the table-level.</p>
+<p>:information_source: Postgres supports this operation by scanning the table twice, which have to wait for existing transactions to terminate. <code>CONCURRENT</code> index creation is more expensive overall. Also, because Postgres creates the index in the system catalogs first, and then does the scan if the index creation fails due to deadlock or some constraints violation, there will be an “invalid” index left behind, which should be <code>DROPPED</code>. <em>#themoreyouknow</em> :rainbow:</p>
+<h3><a id="4_Take_aggressive_locks_as_late_as_possible_132"></a>4. Take aggressive locks as late as possible</h3>
+<p>A transaction only releases its locks at the end of the transaction. Thus, to allow as many concurrent transactions to run as possible, take aggressive locks as late as possible.</p>
+<p>For example, if you are trying to replace the contents of a tables, you could do this:</p>
+<p>BAD:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">BEGIN</span>;</span>
+<span class="hljs-comment">-- reads and writes blocked from here:</span>
+<span class="hljs-operator"><span class="hljs-keyword">TRUNCATE</span> friends;</span>
+<span class="hljs-comment">-- long-running operation:</span>
+\COPY friends FROM 'betterfriends.csv' WITH CSV 
+<span class="hljs-operator"><span class="hljs-keyword">COMMIT</span>;</span> 
+</code></pre>
+<p>BETTER:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">BEGIN</span>;</span>
+<span class="hljs-operator"><span class="hljs-keyword">CREATE</span> <span class="hljs-keyword">TABLE</span> friends_new (<span class="hljs-keyword">LIKE</span> friends <span class="hljs-keyword">INCLUDING</span> ALL);</span>
+<span class="hljs-comment">-- long-running operation:</span>
+\COPY friends_new FROM 'betterfriends.csv' WITH CSV
+<span class="hljs-comment">-- reads and writes blocked from here:</span>
+<span class="hljs-operator"><span class="hljs-keyword">DROP</span> <span class="hljs-keyword">TABLE</span> friends;</span>
+<span class="hljs-operator"><span class="hljs-keyword">ALTER</span> <span class="hljs-keyword">TABLE</span> friends_new <span class="hljs-keyword">RENAME</span> <span class="hljs-keyword">TO</span> friends;</span>
+<span class="hljs-operator"><span class="hljs-keyword">COMMIT</span>;</span>
+</code></pre>
+<p>One concern is that since we didn’t block writes from the beginning, any new friends that were added during the replacement will be gone forever. One solution is to block writes (but not reads) on the table at the beginning:</p>
+<p>ALSO BETTER:</p>
+<pre><code class="language-sql"><span class="hljs-operator"><span class="hljs-keyword">BEGIN</span>;</span>
+<span class="hljs-operator"><span class="hljs-keyword">LOCK</span> friends <span class="hljs-keyword">IN</span> EXCLUSIVE <span class="hljs-keyword">MODE</span>;</span>
+<span class="hljs-comment">-- continue as before</span>
+<span class="hljs-operator"><span class="hljs-keyword">CREATE</span> <span class="hljs-keyword">TABLE</span> friends_new (<span class="hljs-keyword">LIKE</span> friends <span class="hljs-keyword">INCLUDING</span> ALL);</span>
+<span class="hljs-comment">-- long-running operation:</span>
+\COPY friends_new FROM 'betterfriends.csv' WITH CSV
+<span class="hljs-comment">-- reads and writes blocked from here:</span>
+<span class="hljs-operator"><span class="hljs-keyword">DROP</span> <span class="hljs-keyword">TABLE</span> friends;</span>
+<span class="hljs-operator"><span class="hljs-keyword">ALTER</span> <span class="hljs-keyword">TABLE</span> friends_new <span class="hljs-keyword">RENAME</span> <span class="hljs-keyword">TO</span> friends;</span>
+<span class="hljs-operator"><span class="hljs-keyword">COMMIT</span>;</span>
+</code></pre>
+<h3><a id="5_Adding_a_primary_key_with_minimal_locking_175"></a>5. Adding a primary key with minimal locking</h3>
+<p>Adding a primary key using <code>ALTER TABLE</code> creates an index and sets that index as the primary key. However, since creating an index can be done with minimal locking (allowing writes), we can split this into two steps:</p>
+<p>Instead of <code>ALTER TABLE friends ADD PRIMARY KEY (id);</code><br>
+Do (in 2 transactions):</p>
+<pre><code>CREATE UNIQUE INDEX CONCURRENTLY friends_pk ON friends (id); -- takes a long time if table is large
+ALTER TABLE friends ADD CONSTRAINT friends_pk PRIMARY KEY USING INDEX friends_pk; -- blocks all queries, but only briefly
+</code></pre>
+<h3><a id="6_Never_VACUUM_FULL_184"></a>6. Never VACUUM FULL</h3>
+<ul>
+<li>Simply put, <code>VACUUM FULL == PLEASE FREEZE MY DATABASE FOR HOURS</code></li>
+<li>Rewrites whole table and puts a full lock on it</li>
+<li>The main reason why messing with <code>AUTOVACUUM</code> is in general, a bad idea</li>
+</ul>
+<h3><a id="7_Avoid_deadlocks_by_ordering_commands_188"></a>7. Avoid deadlocks by ordering commands</h3>
+<h4><a id="Deadlock_example_189"></a>Deadlock example:</h4>
+<p>Transaction 1:</p>
+<pre><code>BEGIN;
+SELECT * FROM friends WHERE first_name = 'Dennis' AND last_name = 'Merino';
+SELECT * FROM friends WHERE first_name = 'Michelle' AND last_name = 'Wong';
+END;
+</code></pre>
+<p>Transaction 2:</p>
+<pre><code>BEGIN;
+SELECT * FROM friends WHERE first_name = 'Michelle' AND last_name = 'Wong';
+SELECT * FROM friends WHERE first_name = 'Dennis' AND last_name = 'Merino';
+END;
+</code></pre>
+<p>Potentially will deadlock.</p>
+<p>One solution to deadlocks is to try to always acquire your resources in a predetermined order (See <code>CS 343</code> or the UofT equivilent course)</p>
+<h1><a id="References_208"></a>References</h1>
+<p><a href="https://www.postgresql.org/docs/current/static/explicit-locking.html">https://www.postgresql.org/docs/current/static/explicit-locking.html</a><br>
+<a href="https://wiki.postgresql.org/wiki/Lock_Monitoring">https://wiki.postgresql.org/wiki/Lock_Monitoring</a><br>
+<a href="https://www.citusdata.com/blog/2018/02/15/when-postgresql-blocks/">https://www.citusdata.com/blog/2018/02/15/when-postgresql-blocks/</a><br>
+<a href="https://www.citusdata.com/blog/2018/02/22/seven-tips-for-dealing-with-postgres-locks/">https://www.citusdata.com/blog/2018/02/22/seven-tips-for-dealing-with-postgres-locks/</a><br>
+<a href="https://www.postgresql.org/docs/9.5/static/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY">https://www.postgresql.org/docs/9.5/static/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY</a><br>
+<a href="https://www.postgresql.org/docs/9.2/static/monitoring-stats.html#PG-STAT-ACTIVITY-VIEW">https://www.postgresql.org/docs/9.2/static/monitoring-stats.html#PG-STAT-ACTIVITY-VIEW</a></p>
+
+</body></html>
